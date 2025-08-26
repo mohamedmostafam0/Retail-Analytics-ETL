@@ -1,0 +1,126 @@
+version: "3"
+
+x-airflow-common: &airflow-common
+  build:
+    context: ./containers/airflow/
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: ${AIRFLOW__CORE__EXECUTOR}
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: ${AIRFLOW__CORE__SQL_ALCHEMY_CONN}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: ${AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION}
+    AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES}
+    AIRFLOW__API__AUTH_BACKEND: ${AIRFLOW__API__AUTH_BACKEND}
+    AIRFLOW_CONN_POSTGRES_DEFAULT: ${AIRFLOW_CONN_POSTGRES_DEFAULT}
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./data:/opt/airflow/data
+    - ./visualization:/opt/airflow/visualization
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./tests:/opt/airflow/tests
+    - ./temp:/opt/airflow/temp
+  user: "${AIRFLOW_UID:-root}:${AIRFLOW_GID:-root}"
+  depends_on:
+    postgres:
+      condition: service_healthy
+  env_file:
+    - .env
+
+services:
+  postgres:
+    container_name: postgres
+    image: postgres:${POSTGRES_TAG}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - ./containers/upstream:/docker-entrypoint-initdb.d
+      - ./data:/input_data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
+      interval: 5s
+      retries: 5
+    restart: always
+    ports:
+      - "${POSTGRES_PORT}:5432"
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: webserver
+    command: webserver
+    ports:
+      - "${AIRFLOW_WEB_PORT}:8080"
+    environment:
+      - PYTHONPATH=/opt/airflow:/opt/airflow/dags:/opt/airflow/plugins:/opt/airflow/variables
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # 👈 add this
+      - ./dags:/opt/airflow/dags
+      - ./variables:/opt/airflow/variables
+      - ./data:/opt/airflow/data
+      - ./visualization:/opt/airflow/visualization
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./tests:/opt/airflow/tests
+      - ./temp:/opt/airflow/temp
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+    env_file:
+      - .env
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: scheduler
+    command: scheduler
+    environment:
+      - PYTHONPATH=/opt/airflow:/opt/airflow/dags:/opt/airflow/plugins:/opt/airflow/variables
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # 👈 add this
+      - ./dags:/opt/airflow/dags
+      - ./variables:/opt/airflow/variables
+      - ./data:/opt/airflow/data
+      - ./visualization:/opt/airflow/visualization
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./tests:/opt/airflow/tests
+      - ./temp:/opt/airflow/temp
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"',
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+    env_file:
+      - .env
+
+  airflow-init:
+    <<: *airflow-common
+    command: version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_UPGRADE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD}
+
+  minio:
+    image: minio/minio:latest
+    hostname: minio
+    container_name: minio
+    ports:
+      - "${MINIO_API_PORT}:9000"
+      - "${MINIO_CONSOLE_PORT}:9001"
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server --console-address ":9001" /data
