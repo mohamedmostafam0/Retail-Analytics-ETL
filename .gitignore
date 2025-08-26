@@ -80,3 +80,5 @@ terraform.rc
 Footer
 
 dashboard_files/
+
+.git
