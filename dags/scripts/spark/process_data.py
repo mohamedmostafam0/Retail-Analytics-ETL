@@ -5,7 +5,7 @@ from pyspark.ml import Pipeline
 from pyspark.sql.functions import col, when
 
 
-def process_movie_reviews(spark, input_path, output_path, run_id):
+def process_movie_reviews(spark, input_path, gcp_project_id, gcp_dataset_name, run_id):
     df = spark.read.csv(input_path, header=True, inferSchema=True)
 
     tokenizer = Tokenizer(inputCol="review_str", outputCol="words")
@@ -20,24 +20,28 @@ def process_movie_reviews(spark, input_path, output_path, run_id):
     # Dummy classification logic
     predictions = predictions.withColumn("positive_review", when(col("sentiment") == "positive", True).otherwise(False))
 
-    predictions.select("cid", "positive_review").write.mode("overwrite").parquet(f"{output_path}/movie_review/{run_id}")
+    predictions.select("cid", "positive_review").write.format("bigquery").option("table", f"{gcp_project_id}.{gcp_dataset_name}.movie_review").mode("overwrite").save()
 
-def process_user_purchases(spark, input_path, output_path, run_id):
+
+def process_user_purchases(spark, input_path, gcp_project_id, gcp_dataset_name, run_id):
     df = spark.read.csv(input_path, header=True, inferSchema=True)
-    df.write.mode("overwrite").parquet(f"{output_path}/user_purchase/{run_id}")
+    df.write.format("bigquery").option("table", f"{gcp_project_id}.{gcp_dataset_name}.user_purchase").mode("overwrite").save()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--movie_review_input", required=True)
     parser.add_argument("--user_purchase_input", required=True)
-    parser.add_argument("--output", required=True)
+    parser.add_argument("--gcp_project_id", required=True)
+    parser.add_argument("--gcp_dataset_name", required=True)
     parser.add_argument("--run-id", required=True)
     args = parser.parse_args()
 
-    spark = SparkSession.builder.appName("ProcessData").getOrCreate()
+    spark = SparkSession.builder.appName("ProcessData") \
+        .config("spark.jars.packages", "com.google.cloud.spark:spark-bigquery-with-dependencies_2.12:0.34.0") \
+        .getOrCreate()
 
-    process_movie_reviews(spark, args.movie_review_input, args.output, args.run_id)
-    process_user_purchases(spark, args.user_purchase_input, args.output, args.run_id)
+    process_movie_reviews(spark, args.movie_review_input, args.gcp_project_id, args.gcp_dataset_name, args.run_id)
+    process_user_purchases(spark, args.user_purchase_input, args.gcp_project_id, args.gcp_dataset_name, args.run_id)
 
     spark.stop()

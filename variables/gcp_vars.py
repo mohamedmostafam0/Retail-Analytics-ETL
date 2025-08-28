@@ -1,0 +1,3 @@
+import os
+GCP_PROJECT_ID=os.getenv("GCP_PROJECT_ID")
+GCP_DATASET_NAME=os.getenv("GCP_DATASET_NAME")

@@ -1,0 +1,1 @@
+CREATE OR REPLACE VIEW `{{ gcp_project }}.{{ gcp_dataset }}.user_behaviour_metrics_view` AS SELECT * FROM `{{ gcp_project }}.{{ gcp_dataset }}.user_behaviour_metrics`
