@@ -12,7 +12,6 @@ plotly==5.22.0
 jupyter==1.0.0
 types-requests==2.32.0.20240602
 apache-airflow-providers-apache-spark==4.8.1
-duckdb==1.1.0
-plotly==5.22.0
-jupyter==1.0.0
-types-requests==2.32.0.20240602
+pandas
+sqlalchemy
+requests

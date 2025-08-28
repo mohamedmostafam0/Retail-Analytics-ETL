@@ -1,86 +1,49 @@
 from datetime import datetime, timedelta
 import os
-import shutil
-import boto3
-import duckdb
 
 from docker.types import Mount
 
-from variables.minio_vars import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_REGION, AWS_CONN_ID
-from variables.postgres_vars import AIRFLOW_CONN_POSTGRES_DEFAULT, POSTGRES_CONN_ID
+from variables.minio_vars import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
 
-
-from airflow.models import Variable
 from airflow import DAG
-from airflow.operators.bash_operator import BashOperator
 from airflow.operators.python_operator import PythonOperator
 from airflow.providers.amazon.aws.operators.s3 import S3CreateBucketOperator
 from airflow.providers.amazon.aws.transfers.local_to_s3 import LocalFilesystemToS3Operator
 from airflow.providers.amazon.aws.transfers.sql_to_s3 import SqlToS3Operator
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
+from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
 
+from dags.scripts.logic.bq_logic import (
+    query_user_behaviour_metrics,
+    generate_looker_studio_link,
+)
 
 # -------------------------
-# Parameters via Airflow Variables
+# Parameters
 # -------------------------
 DATA_PATH = "/opt/airflow/data"
-TEMP_PATH = "/opt/airflow/temp/s3folder"
-DASHBOARD_PATH = "/opt/airflow/dags/scripts/dashboard"
 
 USER_ANALYTICS_BUCKET = "user-analytics"
-MOVIE_REVIEW_KEY = "movie_review_key"
-USER_PURCHASE_KEY = "raw/user_purchase/user_purchase.csv"
+MOVIE_REVIEW_KEY = "movie_review.csv"
+USER_PURCHASE_KEY = "raw/user_purchase.csv"
 
-# AIRFLOW_CONN_POSTGRES_DEFAULT = Variable.get("AIRFLOW_CONN_POSTGRES_DEFAULT")
+SPARK_IMAGE = "spark-custom"
+PROCESS_DATA_SCRIPT = "/app/process_data.py"
 
-MOVIE_CLASSIFIER_IMAGE = "bitnami/spark:latest"
-MOVIE_CLASSIFIER_SCRIPT = "/app/random_text_classification.py"
-
-# MINIO_ENDPOINT = Variable.get("minio_endpoint")
-# MINIO_ACCESS_KEY = Variable.get("minio_access_key")
-# MINIO_SECRET_KEY = Variable.get("minio_secret_key")
-# MINIO_REGION = Variable.get("minio_region")
-
+GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
+GCP_DATASET_NAME = os.getenv("GCP_DATASET_NAME")
 
 default_args = {
     "owner": "mohamed",
     "depends_on_past": False,
-    "email_on_failure": True,
-    "email": ["alerts@yourcompany.com"],
-    # "retries": 2,
+    "email_on_failure": False,
+    "retries": 1,
     "retry_delay": timedelta(minutes=5),
     "execution_timeout": timedelta(minutes=20),
 }
 
-# TODO: remove helper functions from dag file
-def get_s3_folder(
-    s3_bucket, s3_folder, local_folder="/opt/airflow/temp/s3folder/"
-):
-    s3 = boto3.resource(
-        service_name="s3",
-        endpoint_url=os.getenv("MINIO_ENDPOINT"),
-        aws_access_key_id=os.getenv("MINIO_ACCESS_KEY"),
-        aws_secret_access_key=os.getenv("MINIO_SECRET_KEY"),
-        region_name=os.getenv("MINIO_REGION"),
-    )
-    bucket = s3.Bucket(s3_bucket)
-    local_path = os.path.join(local_folder, s3_folder)
-    # Delete the local folder if it exists
-    if os.path.exists(local_path):
-        shutil.rmtree(local_path)
 
-    for obj in bucket.objects.filter(Prefix=s3_folder):
-        target = os.path.join(local_path, os.path.relpath(obj.key, s3_folder))
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        bucket.download_file(obj.key, target)
-        print(f"Downloaded {obj.key} to {target}")
-
-
-
-# -------------------------
-# DAG definition
-# -------------------------
 with DAG(
     "user_analytics_dag",
     description="Pull user data and movie review data to analyze behaviour",
@@ -88,6 +51,11 @@ with DAG(
     start_date=datetime(2023, 1, 1),
     catchup=False,
     default_args=default_args,
+    template_searchpath=f"/opt/airflow/dags/views",
+    user_defined_macros={
+        "gcp_project": GCP_PROJECT_ID,
+        "gcp_dataset": GCP_DATASET_NAME,
+    },
 ) as dag:
 
     create_s3_bucket = S3CreateBucketOperator(
@@ -115,117 +83,158 @@ with DAG(
         aws_conn_id="minio_conn",
     )
 
-    movie_classifier = DockerOperator(
-        task_id="movie_classifier",
-        image=MOVIE_CLASSIFIER_IMAGE,
+    process_data = DockerOperator(
+        task_id="process_data",
+        image=SPARK_IMAGE,
         api_version="auto",
         auto_remove=True,
-        command=f"""
-            bash -c "pip install numpy &&
-            spark-submit \
+        command=f'''
+            bash -c "spark-submit \
                 --conf spark.hadoop.fs.s3a.endpoint={MINIO_ENDPOINT} \
                 --conf spark.hadoop.fs.s3a.access.key={MINIO_ACCESS_KEY} \
                 --conf spark.hadoop.fs.s3a.secret.key={MINIO_SECRET_KEY} \
                 --conf spark.hadoop.fs.s3a.path.style.access=true \
-                {MOVIE_CLASSIFIER_SCRIPT} \
-                --input s3a://{USER_ANALYTICS_BUCKET}/{MOVIE_REVIEW_KEY} \
-                --output s3a://{USER_ANALYTICS_BUCKET}/clean/movie_review \
+                {PROCESS_DATA_SCRIPT} \
+                --movie_review_input s3a://{USER_ANALYTICS_BUCKET}/{MOVIE_REVIEW_KEY} \
+                --user_purchase_input s3a://{USER_ANALYTICS_BUCKET}/{USER_PURCHASE_KEY} \
+                --output s3a://{USER_ANALYTICS_BUCKET}/clean \
                 --run-id {{ds}}"
-        """,
-        environment={
-            "AWS_ACCESS_KEY_ID": MINIO_ACCESS_KEY,
-            "AWS_SECRET_ACCESS_KEY": MINIO_SECRET_KEY,
-            "AWS_REGION": MINIO_REGION,
-            "AWS_ENDPOINT": MINIO_ENDPOINT,
-        },
+        ''',
         docker_url="unix://var/run/docker.sock",
         network_mode="batch-etl-duckdb_default",
         mounts=[
-            # Host path → container path
             Mount(source="/home/mohamed-client/Documents/data-engineering/Batch-ETL-DuckDB/dags/scripts/spark",
                 target="/app", type="bind"),
-            Mount(source="/home/mohamed-client/Documents/data-engineering/Batch-ETL-DuckDB/data",
-                target="/data", type="bind"),
         ],
         mount_tmp_dir=False,
     )
 
-    get_movie_review_to_warehouse = PythonOperator(
-        task_id="get_movie_review_to_warehouse",
-        python_callable=get_s3_folder,
-        op_kwargs={"s3_bucket": USER_ANALYTICS_BUCKET, "s3_folder": "clean/movie_review"},
-    )
-
-    get_user_purchase_to_warehouse = PythonOperator(
-        task_id="get_user_purchase_to_warehouse",
-        python_callable=get_s3_folder,
-        op_kwargs={"s3_bucket": USER_ANALYTICS_BUCKET, "s3_folder": os.path.dirname(USER_PURCHASE_KEY)},
-    )
-
-    def create_user_behaviour_metric():
-        try:
-            q = f"""
-            with up as (
-              select * from '{TEMP_PATH}/raw/user_purchase/user_purchase.csv'
-            ),
-            mr as (
-              select * from '{TEMP_PATH}/clean/movie_review/*.parquet'
-            )
-            select
-              up.customer_id,
-              sum(up.quantity * up.unit_price) as amount_spent,
-              sum(case when mr.positive_review then 1 else 0 end) as num_positive_reviews,
-              count(mr.cid) as num_reviews
-            from up
-            join mr on up.customer_id = mr.cid
-            group by up.customer_id
-            """
-            duckdb.sql(q).write_csv(f"{DATA_PATH}/behaviour_metrics.csv")
-        except Exception as e: 
-            raise RuntimeError(f"Failed to create behaviour metrics: {e}")
-
-
-
-    wait_for_user_purchase = S3KeySensor(
-        task_id="wait_for_user_purchase",
+    wait_for_user_purchase_parquet = S3KeySensor(
+        task_id="wait_for_user_purchase_parquet",
         bucket_name=USER_ANALYTICS_BUCKET,
-        bucket_key=USER_PURCHASE_KEY,
-        poke_interval=10,
-        timeout=300,
-        mode="reschedule",
-        aws_conn_id="minio_conn",
-
-    )
-
-    wait_for_movie_review = S3KeySensor(
-        task_id="wait_for_movie_review",
-        bucket_name=USER_ANALYTICS_BUCKET,
-        bucket_key="clean/movie_review/*.parquet",
+        bucket_key=f"clean/user_purchase/{{ds}}/*.parquet",
         wildcard_match=True,
         poke_interval=10,
         timeout=300,
         mode="reschedule",
         aws_conn_id="minio_conn",
-
     )
 
-    get_user_behaviour_metric = PythonOperator(
-        task_id="get_user_behaviour_metric",
-        python_callable=create_user_behaviour_metric,
-    )
-    
-    gen_dashboard = BashOperator(
-        task_id="generate_dashboard",
-        bash_command=f"cd {DASHBOARD_PATH} && quarto render {DASHBOARD_PATH}/dashboard.qmd",
+    wait_for_movie_review_parquet = S3KeySensor(
+        task_id="wait_for_movie_review_parquet",
+        bucket_name=USER_ANALYTICS_BUCKET,
+        bucket_key=f"clean/movie_review/{{ds}}/*.parquet",
+        wildcard_match=True,
+        poke_interval=10,
+        timeout=300,
+        mode="reschedule",
+        aws_conn_id="minio_conn",
     )
 
+    load_user_purchase_to_bq = BigQueryInsertJobOperator(
+        task_id="load_user_purchase_to_bq",
+        configuration={
+            "load": {
+                "sourceUris": [f"gs://{USER_ANALYTICS_BUCKET}/clean/user_purchase/{{ds}}/*.parquet"],
+                "destinationTable": {
+                    "projectId": GCP_PROJECT_ID,
+                    "datasetId": GCP_DATASET_NAME,
+                    "tableId": "user_purchase",
+                },
+                "sourceFormat": "PARQUET",
+                "writeDisposition": "WRITE_TRUNCATE",
+            }
+        },
+    )
 
-    # -------------------------
-    # Task dependencies
-    # -------------------------
+    load_movie_review_to_bq = BigQueryInsertJobOperator(
+        task_id="load_movie_review_to_bq",
+        configuration={
+            "load": {
+                "sourceUris": [f"gs://{USER_ANALYTICS_BUCKET}/clean/movie_review/{{ds}}/*.parquet"],
+                "destinationTable": {
+                    "projectId": GCP_PROJECT_ID,
+                    "datasetId": GCP_DATASET_NAME,
+                    "tableId": "movie_review",
+                },
+                "sourceFormat": "PARQUET",
+                "writeDisposition": "WRITE_TRUNCATE",
+            }
+        },
+    )
+
+    query_user_behaviour_metrics_task = PythonOperator(
+        task_id="query_user_behaviour_metrics",
+        python_callable=query_user_behaviour_metrics,
+        op_kwargs={
+            "gcp_project_id": GCP_PROJECT_ID,
+            "gcp_dataset_name": GCP_DATASET_NAME,
+        },
+    )
+
+    create_user_behaviour_metrics_view = BigQueryInsertJobOperator(
+        task_id="create_user_behaviour_metrics_view",
+        configuration={
+            "query": {
+                "query": f"CREATE OR REPLACE VIEW `{GCP_PROJECT_ID}.{GCP_DATASET_NAME}.user_behaviour_metrics_view` AS SELECT * FROM `{GCP_PROJECT_ID}.{GCP_DATASET_NAME}.user_behaviour_metrics",
+                "useLegacySql": False,
+            }
+        },
+    )
+
+    create_top_5_customers_by_amount_spent_view = BigQueryInsertJobOperator(
+        task_id="create_top_5_customers_by_amount_spent_view",
+        configuration={
+            "query": {
+                "query": "{{ macros.jinja.get_template('top_5_customers_by_amount_spent.sql').render() }}",
+                "useLegacySql": False,
+            }
+        },
+    )
+
+    create_top_5_customers_by_positive_reviews_view = BigQueryInsertJobOperator(
+        task_id="create_top_5_customers_by_positive_reviews_view",
+        configuration={
+            "query": {
+                "query": "{{ macros.jinja.get_template('top_5_customers_by_positive_reviews.sql').render() }}",
+                "useLegacySql": False,
+            }
+        },
+    )
+
+    create_correlation_amount_spent_vs_reviews_view = BigQueryInsertJobOperator(
+        task_id="create_correlation_amount_spent_vs_reviews_view",
+        configuration={
+            "query": {
+                "query": "{{ macros.jinja.get_template('correlation_amount_spent_vs_reviews.sql').render() }}",
+                "useLegacySql": False,
+            }
+        },
+    )
+
+    generate_looker_studio_link_task = PythonOperator(
+        task_id="generate_looker_studio_link",
+        python_callable=generate_looker_studio_link,
+        op_kwargs={
+            "gcp_project_id": GCP_PROJECT_ID,
+            "gcp_dataset_name": GCP_DATASET_NAME,
+        },
+    )
+
     create_s3_bucket >> [user_purchase_to_s3, movie_review_to_s3]
-
-    user_purchase_to_s3 >> get_user_purchase_to_warehouse
-    movie_review_to_s3 >> movie_classifier >> get_movie_review_to_warehouse
-
-    [wait_for_user_purchase, wait_for_movie_review] >> get_user_behaviour_metric >> gen_dashboard
+    user_purchase_to_s3 >> process_data
+    movie_review_to_s3 >> process_data
+    process_data >> wait_for_user_purchase_parquet >> load_user_purchase_to_bq
+    process_data >> wait_for_movie_review_parquet >> load_movie_review_to_bq
+    [load_user_purchase_to_bq, load_movie_review_to_bq] >> query_user_behaviour_metrics_task
+    query_user_behaviour_metrics_task >> create_user_behaviour_metrics_view
+    create_user_behaviour_metrics_view >> [
+        create_top_5_customers_by_amount_spent_view,
+        create_top_5_customers_by_positive_reviews_view,
+        create_correlation_amount_spent_vs_reviews_view,
+    ]
+    [
+        create_top_5_customers_by_amount_spent_view,
+        create_top_5_customers_by_positive_reviews_view,
+        create_correlation_amount_spent_vs_reviews_view,
+    ] >> generate_looker_studio_link_task
