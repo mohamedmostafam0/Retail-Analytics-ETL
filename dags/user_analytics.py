@@ -45,7 +45,7 @@ USER_ANALYTICS_BUCKET = "user-analytics"
 MOVIE_REVIEW_KEY = "movie_review.csv"
 USER_PURCHASE_KEY = "raw/user_purchase.csv"
 
-SPARK_IMAGE = "spark-custom"
+SPARK_IMAGE = "bitnami/spark:latest"
 PROCESS_DATA_SCRIPT = "/app/process_data.py"
 
 
@@ -101,6 +101,7 @@ with DAG(
         create_s3_bucket >> [user_purchase_to_s3, movie_review_to_s3]
 
     with TaskGroup("processing_tasks", tooltip="Data Processing Tasks") as processing_tasks:
+        
         generate_spark_output_paths_task = PythonOperator(
             task_id="generate_spark_output_paths",
             python_callable=_generate_spark_output_paths,
@@ -112,33 +113,35 @@ with DAG(
             image=SPARK_IMAGE,
             api_version="auto",
             auto_remove=True,
-            command=f'''
-                bash -c "spark-submit \
-                    --conf spark.hadoop.fs.s3a.endpoint={MINIO_ENDPOINT} \
-                    --conf spark.hadoop.fs.s3a.access.key={MINIO_ACCESS_KEY} \
-                    --conf spark.hadoop.fs.s3a.secret.key={MINIO_SECRET_KEY} \
-                    --conf spark.hadoop.fs.s3a.path.style.access=true \
-                    {PROCESS_DATA_SCRIPT} \
-                    --movie_review_input s3a://{USER_ANALYTICS_BUCKET}/{MOVIE_REVIEW_KEY} \
-                    --user_purchase_input s3a://{USER_ANALYTICS_BUCKET}/{USER_PURCHASE_KEY} \
-                    --output {{ti.xcom_pull(task_ids='processing_tasks.generate_spark_output_paths', key='spark_clean_base_path')}} \
-                    --run-id {{ds}}"
-            ''',
+            command=[
+                "spark-submit",
+                "--conf", f"spark.hadoop.fs.s3a.endpoint={MINIO_ENDPOINT}",
+                "--conf", f"spark.hadoop.fs.s3a.access.key={MINIO_ACCESS_KEY}",
+                "--conf", f"spark.hadoop.fs.s3a.secret.key={MINIO_SECRET_KEY}",
+                "--conf", "spark.hadoop.fs.s3a.path.style.access=true",
+                PROCESS_DATA_SCRIPT,
+                "--movie_review_input", f"s3a://{USER_ANALYTICS_BUCKET}/{MOVIE_REVIEW_KEY}",
+                "--user_purchase_input", f"s3a://{USER_ANALYTICS_BUCKET}/{USER_PURCHASE_KEY}",
+                "--gcp_project_id", GCP_PROJECT_ID,
+                "--gcp_dataset_name", GCP_DATASET_NAME,
+                "--run-id", "{{ ds }}",   # Airflow Jinja renders this
+            ],
             docker_url="unix://var/run/docker.sock",
             network_mode="batch-etl-duckdb_default",
             mounts=[
-                Mount(source="/home/mohamed-client/Documents/data-engineering/Batch-ETL-DuckDB/dags/scripts/spark",
-                    target="/app", type="bind"),
+                Mount(
+                    source="/home/mohamed-client/Documents/data-engineering/Batch-ETL-DuckDB/dags/scripts/spark",
+                    target="/app",
+                    type="bind",
+                ),
             ],
             mount_tmp_dir=False,
         )
 
         
         generate_spark_output_paths_task >> process_data
-        process_data >> [wait_for_user_purchase_parquet, wait_for_movie_review_parquet]
 
     
-
     with TaskGroup("bq_view_creation_tasks", tooltip="BigQuery View Creation Tasks") as bq_view_creation_tasks:
         query_user_behaviour_metrics_task = PythonOperator(
             task_id="query_user_behaviour_metrics",
@@ -190,11 +193,18 @@ with DAG(
         )
 
 
-        query_user_behaviour_metrics_task >> create_user_behaviour_metrics_view
-        create_user_behaviour_metrics_view >> [
-            create_top_5_customers_by_amount_spent_view,
-            create_top_5_customers_by_positive_reviews_view,
-            create_correlation_amount_spent_vs_reviews_view,
+
+    generate_looker_studio_link_task = PythonOperator(
+        task_id="generate_looker_studio_link",
+        python_callable=generate_looker_studio_link,
+        provide_context=True,
+    )
+
+    query_user_behaviour_metrics_task >> create_user_behaviour_metrics_view
+    create_user_behaviour_metrics_view >> [
+        create_top_5_customers_by_amount_spent_view,
+        create_top_5_customers_by_positive_reviews_view,
+        create_correlation_amount_spent_vs_reviews_view,
     ]
 
     ingestion_tasks >> processing_tasks
