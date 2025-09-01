@@ -16,6 +16,8 @@ from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
 from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
 
+from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+
 from dags.scripts.logic.bq_logic import (
     query_user_behaviour_metrics,
     generate_looker_studio_link,
@@ -45,8 +47,8 @@ USER_ANALYTICS_BUCKET = "user-analytics"
 MOVIE_REVIEW_KEY = "movie_review.csv"
 USER_PURCHASE_KEY = "raw/user_purchase.csv"
 
-SPARK_IMAGE = "bitnami/spark:latest"
-PROCESS_DATA_SCRIPT = "/app/process_data.py"
+SPARK_IMAGE = "my-spark:3.5"
+PROCESS_DATA_SCRIPT = "/opt/airflow/dags/scripts/spark/process_data.py"
 
 
 default_args = {
@@ -108,34 +110,24 @@ with DAG(
             provide_context=True,
         )
 
-        process_data = DockerOperator(
+        process_data = SparkSubmitOperator(
             task_id="process_data",
-            image=SPARK_IMAGE,
-            api_version="auto",
-            auto_remove=True,
-            command=[
-                "spark-submit",
-                "--conf", f"spark.hadoop.fs.s3a.endpoint={MINIO_ENDPOINT}",
-                "--conf", f"spark.hadoop.fs.s3a.access.key={MINIO_ACCESS_KEY}",
-                "--conf", f"spark.hadoop.fs.s3a.secret.key={MINIO_SECRET_KEY}",
-                "--conf", "spark.hadoop.fs.s3a.path.style.access=true",
-                PROCESS_DATA_SCRIPT,
+            application=PROCESS_DATA_SCRIPT,
+            conn_id="spark-conn",
+            packages="com.google.cloud.spark:spark-3.5-bigquery:0.42.2",
+            conf={
+                "spark.hadoop.fs.s3a.endpoint": MINIO_ENDPOINT,
+                "spark.hadoop.fs.s3a.access.key": MINIO_ACCESS_KEY,
+                "spark.hadoop.fs.s3a.secret.key": MINIO_SECRET_KEY,
+                "spark.hadoop.fs.s3a.path.style.access": "true",
+            },
+            application_args=[
                 "--movie_review_input", f"s3a://{USER_ANALYTICS_BUCKET}/{MOVIE_REVIEW_KEY}",
                 "--user_purchase_input", f"s3a://{USER_ANALYTICS_BUCKET}/{USER_PURCHASE_KEY}",
                 "--gcp_project_id", GCP_PROJECT_ID,
                 "--gcp_dataset_name", GCP_DATASET_NAME,
-                "--run-id", "{{ ds }}",   # Airflow Jinja renders this
+                "--run-id", "{{ ds }}",
             ],
-            docker_url="unix://var/run/docker.sock",
-            network_mode="batch-etl-duckdb_default",
-            mounts=[
-                Mount(
-                    source="/home/mohamed-client/Documents/data-engineering/Batch-ETL-DuckDB/dags/scripts/spark",
-                    target="/app",
-                    type="bind",
-                ),
-            ],
-            mount_tmp_dir=False,
         )
 
         

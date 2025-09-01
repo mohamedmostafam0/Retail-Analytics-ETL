@@ -38,7 +38,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     spark = SparkSession.builder.appName("ProcessData") \
-        .config("spark.jars.packages", "com.google.cloud.spark:spark-bigquery-with-dependencies_2.12:0.34.0") \
         .getOrCreate()
 
     process_movie_reviews(spark, args.movie_review_input, args.gcp_project_id, args.gcp_dataset_name, args.run_id)
