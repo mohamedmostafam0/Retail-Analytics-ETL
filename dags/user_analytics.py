@@ -114,8 +114,10 @@ with DAG(
             task_id="process_data",
             application=PROCESS_DATA_SCRIPT,
             conn_id="spark-conn",
-            packages="com.google.cloud.spark:spark-3.5-bigquery:0.42.2",
+            jars="/opt/airflow/jars/hadoop-aws-3.4.0.jar,/opt/airflow/jars/aws-java-sdk-bundle-1.12.539.jar,/opt/airflow/jars/spark-bigquery-with-dependencies_2.12-0.42.2.jar",
             conf={
+                "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
+                "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
                 "spark.hadoop.fs.s3a.endpoint": MINIO_ENDPOINT,
                 "spark.hadoop.fs.s3a.access.key": MINIO_ACCESS_KEY,
                 "spark.hadoop.fs.s3a.secret.key": MINIO_SECRET_KEY,

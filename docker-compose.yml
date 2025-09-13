@@ -1,5 +1,9 @@
 version: "3"
 
+networks:
+  my_network:
+    driver: bridge
+
 x-airflow-common: &airflow-common
   build:
     context: ./containers/airflow/
@@ -19,12 +23,15 @@ x-airflow-common: &airflow-common
     - ./plugins:/opt/airflow/plugins
     - ./tests:/opt/airflow/tests
     - ./temp:/opt/airflow/temp
+    - ./jars:/opt/airflow/jars
   user: "${AIRFLOW_UID:-root}:${AIRFLOW_GID:-root}"
   depends_on:
     postgres:
       condition: service_healthy
   env_file:
     - .env
+  networks:
+    - my_network
 
 services:
   postgres:
@@ -44,6 +51,8 @@ services:
     restart: always
     ports:
       - "${POSTGRES_PORT}:5432"
+    networks:
+      - my_network
 
   airflow-webserver:
     <<: *airflow-common
@@ -63,6 +72,7 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ./tests:/opt/airflow/tests
       - ./temp:/opt/airflow/temp
+      - ./jars:/opt/airflow/jars
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 10s
@@ -71,6 +81,8 @@ services:
     restart: always
     env_file:
       - .env
+    networks:
+      - my_network
 
   airflow-scheduler:
     <<: *airflow-common
@@ -88,11 +100,12 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ./tests:/opt/airflow/tests
       - ./temp:/opt/airflow/temp
+      - ./jars:/opt/airflow/jars
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"',
+          'airflow jobs check --job-type SchedulerJob --hostname "${HOSTNAME}"',
         ]
       interval: 10s
       timeout: 10s
@@ -100,6 +113,8 @@ services:
     restart: always
     env_file:
       - .env
+    networks:
+      - my_network
 
   airflow-init:
     <<: *airflow-common
@@ -110,6 +125,8 @@ services:
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME}
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD}
+    networks:
+      - my_network
 
   minio:
     image: minio/minio:latest
@@ -124,6 +141,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     command: server --console-address ":9001" /data
+    networks:
+      - my_network
 
   spark:
     build:
@@ -136,6 +155,10 @@ services:
     ports:
       - "8081:8080"
       - "7077:7077"
+    volumes:
+      - ./jars:/opt/bitnami/spark/jars
+    networks:
+      - my_network
 
   spark-worker:
     image: my-spark:3.5
@@ -144,3 +167,7 @@ services:
       - SPARK_MASTER_URL=spark://spark:7077
     depends_on:
       - spark
+    volumes:
+      - ./jars:/opt/bitnami/spark/jars
+    networks:
+      - my_network
