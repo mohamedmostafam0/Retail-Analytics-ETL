@@ -82,7 +82,8 @@ add_airflow_connection(
 
 spark_extra = {
     "deploy-mode": "client",
-    "spark-binary": "spark-submit"
+    "spark-binary": "spark-submit",
+    "master": "spark://spark:7077",
 }
 
 # Drop old connection (optional safeguard)
@@ -96,3 +97,5 @@ add_airflow_connection(
     port=SPARK_PORT or 7077,        # 👈 must not be None
     extra=spark_extra
 )
+
+logger.info("master is " + spark_extra["master"])

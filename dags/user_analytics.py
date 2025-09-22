@@ -48,7 +48,7 @@ MOVIE_REVIEW_KEY = "movie_review.csv"
 USER_PURCHASE_KEY = "raw/user_purchase.csv"
 
 SPARK_IMAGE = "my-spark:3.5"
-PROCESS_DATA_SCRIPT = "/opt/airflow/dags/scripts/spark/process_data.py"
+PROCESS_DATA_SCRIPT = "/opt/jobs/process_data.py"
 
 
 default_args = {
@@ -116,13 +116,10 @@ with DAG(
             conn_id="spark-conn",
             # master="spark://spark:7077",
             # UPDATED: Use the correct JAR paths for Apache Spark image
-            jars="/opt/spark/jars-extra/hadoop-aws-3.4.0.jar,"
-             "/opt/spark/jars-extra/aws-java-sdk-bundle-1.12.539.jar,"
-             "/opt/spark/jars-extra/spark-bigquery-with-dependencies_2.12-0.42.2.jar",
+            # jars="/opt/spark/jars-extra/hadoop-aws-3.4.0.jar,"
+            #  "/opt/spark/jars-extra/aws-java-sdk-bundle-1.12.539.jar,"
+            #  "/opt/spark/jars-extra/spark-bigquery-with-dependencies_2.12-0.42.2.jar",
             conf={
-                "spark.jars": "/opt/spark/jars-extra/hadoop-aws-3.4.0.jar,"
-                  "/opt/spark/jars-extra/aws-java-sdk-bundle-1.12.539.jar,"
-                  "/opt/spark/jars-extra/spark-bigquery-with-dependencies_2.12-0.42.2.jar",
                 "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
                 "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
                 "spark.hadoop.fs.s3a.endpoint": MINIO_ENDPOINT,
@@ -138,7 +135,6 @@ with DAG(
                 "--gcp_dataset_name", GCP_DATASET_NAME,
                 "--run-id", "{{ ds }}",
             ],
-            verbose=True,
         )
         
         generate_spark_output_paths_task >> process_data
