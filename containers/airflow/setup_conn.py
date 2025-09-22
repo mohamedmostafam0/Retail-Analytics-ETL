@@ -78,12 +78,21 @@ add_airflow_connection(
 # -------------------------
 # Spark connection
 # -------------------------
+
+
 spark_extra = {
-    "master": f"spark://{SPARK_HOST}:{SPARK_PORT}"
+    "deploy-mode": "client",
+    "spark-binary": "spark-submit"
 }
+
+# Drop old connection (optional safeguard)
+subprocess.run(["airflow", "connections", "delete", SPARK_CONN_ID or "spark-conn"])
+
+# Add new connection
 add_airflow_connection(
     conn_id=SPARK_CONN_ID or "spark-conn",
     conn_type=SPARK_CONN_TYPE or "spark",
-    extra=spark_extra,
+    host=SPARK_HOST or "spark",     # 👈 must not be None
+    port=SPARK_PORT or 7077,        # 👈 must not be None
+    extra=spark_extra
 )
-

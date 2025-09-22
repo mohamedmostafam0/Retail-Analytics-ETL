@@ -114,14 +114,22 @@ with DAG(
             task_id="process_data",
             application=PROCESS_DATA_SCRIPT,
             conn_id="spark-conn",
-            jars="/opt/airflow/jars/hadoop-aws-3.4.0.jar,/opt/airflow/jars/aws-java-sdk-bundle-1.12.539.jar,/opt/airflow/jars/spark-bigquery-with-dependencies_2.12-0.42.2.jar",
+            # master="spark://spark:7077",
+            # UPDATED: Use the correct JAR paths for Apache Spark image
+            jars="/opt/spark/jars-extra/hadoop-aws-3.4.0.jar,"
+             "/opt/spark/jars-extra/aws-java-sdk-bundle-1.12.539.jar,"
+             "/opt/spark/jars-extra/spark-bigquery-with-dependencies_2.12-0.42.2.jar",
             conf={
+                "spark.jars": "/opt/spark/jars-extra/hadoop-aws-3.4.0.jar,"
+                  "/opt/spark/jars-extra/aws-java-sdk-bundle-1.12.539.jar,"
+                  "/opt/spark/jars-extra/spark-bigquery-with-dependencies_2.12-0.42.2.jar",
                 "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
                 "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
                 "spark.hadoop.fs.s3a.endpoint": MINIO_ENDPOINT,
                 "spark.hadoop.fs.s3a.access.key": MINIO_ACCESS_KEY,
                 "spark.hadoop.fs.s3a.secret.key": MINIO_SECRET_KEY,
                 "spark.hadoop.fs.s3a.path.style.access": "true",
+
             },
             application_args=[
                 "--movie_review_input", f"s3a://{USER_ANALYTICS_BUCKET}/{MOVIE_REVIEW_KEY}",
@@ -130,12 +138,12 @@ with DAG(
                 "--gcp_dataset_name", GCP_DATASET_NAME,
                 "--run-id", "{{ ds }}",
             ],
+            verbose=True,
         )
-
         
         generate_spark_output_paths_task >> process_data
 
-    
+
     with TaskGroup("bq_view_creation_tasks", tooltip="BigQuery View Creation Tasks") as bq_view_creation_tasks:
         query_user_behaviour_metrics_task = PythonOperator(
             task_id="query_user_behaviour_metrics",

@@ -15,12 +15,5 @@ RUN apt-get update && \
     default-jdk wget curl && \
     rm -rf /var/lib/apt/lists/*
 
-# ✅ Match Hadoop and AWS JAR versions with Spark
-ENV HADOOP_VERSION=3.4.0
-ENV AWS_JAVA_SDK_BUNDLE_VERSION=1.12.539
-
-RUN mkdir -p /opt/airflow/jars && \
-    wget -q https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/${HADOOP_VERSION}/hadoop-aws-${HADOOP_VERSION}.jar -P /opt/airflow/jars/ && \
-    wget -q https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/${AWS_JAVA_SDK_BUNDLE_VERSION}/aws-java-sdk-bundle-${AWS_JAVA_SDK_BUNDLE_VERSION}.jar -P /opt/airflow/jars/
 
 USER airflow
