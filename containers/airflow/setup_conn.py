@@ -84,8 +84,6 @@ spark_extra = {
 add_airflow_connection(
     conn_id=SPARK_CONN_ID or "spark-conn",
     conn_type=SPARK_CONN_TYPE or "spark",
-    host=SPARK_HOST,
-    port=SPARK_PORT,
     extra=spark_extra,
 )
 

@@ -83,3 +83,7 @@ dashboard_files/
 
 .git
 .env
+jars/
+*.csv
+/data/
+/temp/
