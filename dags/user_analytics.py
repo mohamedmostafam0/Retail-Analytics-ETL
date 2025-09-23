@@ -117,7 +117,7 @@ with DAG(
             # master="spark://spark:7077",
             # UPDATED: Use the correct JAR paths for Apache Spark image
             # jars="/opt/spark/jars-extra/hadoop-aws-3.4.0.jar,"
-            #  "/opt/spark/jars-extra/aws-java-sdk-bundle-1.12.539.jar,"
+            #  "/opt/spark/jars-extra/aws-java-sdk-bundle-2.20.43.jar,"
             #  "/opt/spark/jars-extra/spark-bigquery-with-dependencies_2.12-0.42.2.jar",
             conf={
                 "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",

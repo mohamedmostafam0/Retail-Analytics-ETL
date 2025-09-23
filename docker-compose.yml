@@ -76,6 +76,8 @@ services:
       - ./tests:/opt/airflow/tests
       - ./temp:/opt/airflow/temp
       - ./jars:/opt/airflow/jars
+      - ./jobs:/opt/jobs
+
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
       interval: 10s
