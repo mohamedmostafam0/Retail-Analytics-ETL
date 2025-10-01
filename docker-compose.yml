@@ -23,7 +23,6 @@ x-airflow-common: &airflow-common
     - ./plugins:/opt/airflow/plugins
     - ./tests:/opt/airflow/tests
     - ./temp:/opt/airflow/temp
-    - ./jars:/opt/airflow/jars
     - ./jars:/opt/spark/jars-extra
     - ./jobs:/opt/jobs
 
@@ -65,6 +64,7 @@ services:
       - "${AIRFLOW_WEB_PORT}:8080"
     environment:
       - PYTHONPATH=/opt/airflow:/opt/airflow/dags:/opt/airflow/plugins:/opt/airflow/variables
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/spark/sa-key.json
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # 👈 add this
       - ./dags:/opt/airflow/dags
@@ -75,8 +75,9 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ./tests:/opt/airflow/tests
       - ./temp:/opt/airflow/temp
-      - ./jars:/opt/airflow/jars
-      - ./jobs:/opt/jobs
+      - ./jars:/opt/spark/jars-extra # 👈 change from /opt/airflow/jars
+      - ./jobs:/opt/jobs # 👈 already there (keep)
+      - ./service-account.json:/opt/spark/sa-key.json
 
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
@@ -95,6 +96,8 @@ services:
     command: scheduler
     environment:
       - PYTHONPATH=/opt/airflow:/opt/airflow/dags:/opt/airflow/plugins:/opt/airflow/variables
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/spark/sa-key.json
+
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # 👈 add this
       - ./dags:/opt/airflow/dags
@@ -105,7 +108,10 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ./tests:/opt/airflow/tests
       - ./temp:/opt/airflow/temp
-      - ./jars:/opt/airflow/jars
+      - ./jars:/opt/spark/jars-extra # 👈 add this
+      - ./jobs:/opt/jobs # 👈 add this
+      - ./service-account.json:/opt/spark/sa-key.json
+
     healthcheck:
       test:
         [
@@ -154,11 +160,12 @@ services:
       context: ./containers/spark/
     environment:
       - SPARK_MODE=master
-      - SPARK_MASTER_HOST=0.0.0.0
+      - SPARK_MASTER_HOST=spark
       - SPARK_MASTER_PORT=7077
       - SPARK_MASTER_WEBUI_PORT=8080
       - SPARK_CLASSPATH=/opt/spark/jars-extra/* # 👈
       - SPARK_EXTRA_CLASSPATH=/opt/spark/jars-extra/*
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/spark/sa-key.json
     image: my-spark:3.5
     container_name: spark
     ports:
@@ -167,6 +174,7 @@ services:
     volumes:
       - ./jars:/opt/spark/jars-extra
       - ./jobs:/opt/jobs
+      - ./service-account.json:/opt/spark/sa-key.json
     networks:
       - my_network
     healthcheck:
@@ -179,10 +187,12 @@ services:
       - SPARK_MASTER_URL=spark://spark:7077
       - SPARK_CLASSPATH=/opt/spark/jars-extra/* # 👈
       - SPARK_EXTRA_CLASSPATH=/opt/spark/jars-extra/*
+      - GOOGLE_APPLICATION_CREDENTIALS=/opt/spark/sa-key.json
     depends_on:
       - spark
     volumes:
       - ./jars:/opt/spark/jars-extra
       - ./jobs:/opt/jobs
+      - ./service-account.json:/opt/spark/sa-key.json
     networks:
       - my_network

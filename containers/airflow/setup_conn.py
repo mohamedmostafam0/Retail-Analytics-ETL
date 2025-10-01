@@ -87,7 +87,7 @@ spark_extra = {
 }
 
 # Drop old connection (optional safeguard)
-subprocess.run(["airflow", "connections", "delete", SPARK_CONN_ID or "spark-conn"])
+# subprocess.run(["airflow", "connections", "delete", SPARK_CONN_ID or "spark-conn"])
 
 # Add new connection
 add_airflow_connection(
@@ -96,6 +96,30 @@ add_airflow_connection(
     host=SPARK_HOST or "spark",     # 👈 must not be None
     port=SPARK_PORT or 7077,        # 👈 must not be None
     extra=spark_extra
+)
+
+
+from variables.gcp_vars import (
+    GCP_PROJECT_ID,
+    GCP_CONN_ID,
+)
+
+logger.info("your gcp variables are: %s", json.dumps({
+    "GCP_PROJECT_ID": GCP_PROJECT_ID,
+    "GCP_CONN_ID": GCP_CONN_ID,
+}))
+
+# -------------------------
+# Dedicated GCP connection
+# -------------------------
+
+gcp_extra = {
+    "project": GCP_PROJECT_ID,
+}
+add_airflow_connection(
+    conn_id=GCP_CONN_ID or "google_cloud_default",
+    conn_type="google_cloud_platform",
+    extra=gcp_extra,
 )
 
 logger.info("master is " + spark_extra["master"])

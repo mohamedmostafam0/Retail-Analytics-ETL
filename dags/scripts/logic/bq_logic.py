@@ -1,7 +1,8 @@
+import os
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 
 def query_user_behaviour_metrics(gcp_project_id, gcp_dataset_name):
-    hook = BigQueryHook(gcp_conn_id='google_cloud_default')
+    hook = BigQueryHook(gcp_conn_id=os.getenv('GCP_CONN_ID', 'google_cloud_default'))
     client = hook.get_client()
 
     query = f'''
@@ -21,10 +22,8 @@ def query_user_behaviour_metrics(gcp_project_id, gcp_dataset_name):
 
 def generate_looker_studio_link(gcp_project_id, gcp_dataset_name):
     base_url = "https://lookerstudio.google.com/datasources/create"
-    connector_id = "BIG_QUERY"
-    project_id = gcp_project_id
-    dataset_id = gcp_dataset_name
+    gcp_conn_id=os.getenv('GCP_CONN_ID', 'google_cloud_default')
     table_id = "user_behaviour_metrics_view"
     
-    url = f"{base_url}?connectorId={connector_id}&projectId={project_id}&datasetId={dataset_id}&tableId={table_id}"
+    url = f"{base_url}?connectorId={gcp_conn_id}&projectId={gcp_project_id}&datasetId={gcp_dataset_name}&tableId={table_id}"
     print(f"\n\n*****\nLooker Studio Link:\n{url}\n*****\n\n")

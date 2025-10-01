@@ -1,3 +1,4 @@
 import os
 GCP_PROJECT_ID=os.getenv("GCP_PROJECT_ID")
 GCP_DATASET_NAME=os.getenv("GCP_DATASET_NAME")
+GCP_CONN_ID=os.getenv("GCP_CONN_ID")

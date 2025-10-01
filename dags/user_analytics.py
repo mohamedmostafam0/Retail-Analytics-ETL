@@ -114,11 +114,8 @@ with DAG(
             task_id="process_data",
             application=PROCESS_DATA_SCRIPT,
             conn_id="spark-conn",
-            # master="spark://spark:7077",
-            # UPDATED: Use the correct JAR paths for Apache Spark image
-            # jars="/opt/spark/jars-extra/hadoop-aws-3.4.0.jar,"
-            #  "/opt/spark/jars-extra/aws-java-sdk-bundle-2.20.43.jar,"
-            #  "/opt/spark/jars-extra/spark-bigquery-with-dependencies_2.12-0.42.2.jar",
+            deploy_mode="client",
+            jars="/opt/spark/jars-extra/aws-java-sdk-bundle-1.12.262.jar,/opt/spark/jars-extra/hadoop-aws-3.3.4.jar,/opt/spark/jars-extra/spark-bigquery-with-dependencies_2.12-0.42.2.jar",
             conf={
                 "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
                 "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
@@ -126,7 +123,13 @@ with DAG(
                 "spark.hadoop.fs.s3a.access.key": MINIO_ACCESS_KEY,
                 "spark.hadoop.fs.s3a.secret.key": MINIO_SECRET_KEY,
                 "spark.hadoop.fs.s3a.path.style.access": "true",
-
+                # Add these BigQuery configurations
+                "spark.sql.execution.arrow.pyspark.enabled": "true",
+                "google.cloud.auth.service.account.enable": "true",
+                "google.cloud.auth.service.account.json.keyfile": "/opt/spark/sa-key.json",
+            },
+            env_vars={
+                "GOOGLE_APPLICATION_CREDENTIALS": "/opt/spark/sa-key.json"
             },
             application_args=[
                 "--movie_review_input", f"s3a://{USER_ANALYTICS_BUCKET}/{MOVIE_REVIEW_KEY}",
@@ -135,8 +138,8 @@ with DAG(
                 "--gcp_dataset_name", GCP_DATASET_NAME,
                 "--run-id", "{{ ds }}",
             ],
-        )
-        
+        )      
+
         generate_spark_output_paths_task >> process_data
 
 
@@ -154,7 +157,7 @@ with DAG(
             task_id="create_user_behaviour_metrics_view",
             configuration={
                 "query": {
-                    "query": "{{ macros.jinja.get_template('user_behaviour_metrics_view.sql').render() }}",
+                    "query": "{% include 'user_behaviour_metrics_view.sql' %}",
                     "useLegacySql": False,
                 }
             },
@@ -164,7 +167,7 @@ with DAG(
             task_id="create_top_5_customers_by_amount_spent_view",
             configuration={
                 "query": {
-                    "query": "{{ macros.jinja.get_template('top_5_customers_by_amount_spent.sql').render() }}",
+                    "query": "{% include 'top_5_customers_by_amount_spent.sql' %}",
                     "useLegacySql": False,
                 }
             },
@@ -174,7 +177,7 @@ with DAG(
             task_id="create_top_5_customers_by_positive_reviews_view",
             configuration={
                 "query": {
-                    "query": "{{ macros.jinja.get_template('top_5_customers_by_positive_reviews.sql').render() }}",
+                    "query": "{% include 'top_5_customers_by_positive_reviews.sql' %}",
                     "useLegacySql": False,
                 }
             },
@@ -184,7 +187,7 @@ with DAG(
             task_id="create_correlation_amount_spent_vs_reviews_view",
             configuration={
                 "query": {
-                    "query": "{{ macros.jinja.get_template('correlation_amount_spent_vs_reviews.sql').render() }}",
+                    "query": "{% include 'correlation_amount_spent_vs_reviews.sql' %}",
                     "useLegacySql": False,
                 }
             },
@@ -196,6 +199,11 @@ with DAG(
         task_id="generate_looker_studio_link",
         python_callable=generate_looker_studio_link,
         provide_context=True,
+        op_kwargs={
+                "gcp_project_id": GCP_PROJECT_ID,
+                "gcp_dataset_name": GCP_DATASET_NAME,
+        },
+
     )
 
     query_user_behaviour_metrics_task >> create_user_behaviour_metrics_view
@@ -205,6 +213,6 @@ with DAG(
         create_correlation_amount_spent_vs_reviews_view,
     ]
 
-    ingestion_tasks >> processing_tasks
-    processing_tasks >> bq_view_creation_tasks
+    # ingestion_tasks >> processing_tasks
+    # processing_tasks >> bq_view_creation_tasks
     bq_view_creation_tasks >> generate_looker_studio_link_task

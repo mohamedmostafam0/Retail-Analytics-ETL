@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 from pyspark.sql import SparkSession
 from pyspark.ml.feature import Tokenizer, StopWordsRemover, HashingTF, IDF
 from pyspark.ml import Pipeline
@@ -33,6 +34,10 @@ def process_movie_reviews(spark, input_path, gcp_project_id, gcp_dataset_name, r
     predictions.select("cid", "positive_review").write \
         .format("bigquery") \
         .option("table", f"{gcp_project_id}.{gcp_dataset_name}.movie_review") \
+        .option("parentProject", gcp_project_id) \
+        .option("project", gcp_project_id) \
+        .option("writeMethod", "direct") \
+        .option("temporaryGcsBucket", f"{gcp_project_id}-temp") \
         .mode("overwrite") \
         .save()
     print("Movie reviews saved successfully!")
@@ -47,6 +52,10 @@ def process_user_purchases(spark, input_path, gcp_project_id, gcp_dataset_name, 
     df.write \
         .format("bigquery") \
         .option("table", f"{gcp_project_id}.{gcp_dataset_name}.user_purchase") \
+        .option("parentProject", gcp_project_id) \
+        .option("project", gcp_project_id) \
+        .option("writeMethod", "direct") \
+        .option("temporaryGcsBucket", f"{gcp_project_id}-temp") \
         .mode("overwrite") \
         .save()
     print("User purchases saved successfully!")
@@ -68,10 +77,21 @@ if __name__ == "__main__":
     print(f"GCP Dataset Name: {args.gcp_dataset_name}")
     print(f"Run ID: {args.run_id}")
     
+    # Set up Google Cloud credentials
+    credentials_path = "/opt/spark/sa-key.json"
+    if os.path.exists(credentials_path):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = credentials_path
+        print(f"Google Cloud credentials set to: {credentials_path}")
+    else:
+        print(f"Warning: Credentials file not found at {credentials_path}")
+    
     spark = SparkSession.builder \
         .appName("ProcessData") \
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
+        .config("spark.driver.memory", "2g") \
+        .config("spark.executor.memory", "2g") \
         .getOrCreate()
     
     try:

@@ -42,7 +42,7 @@ __MACOSX
 
 *.pem
 
-###### TERRAFORM IGNORE
+###### TERRAFORM IGROW
 # Local .terraform directories
 **/.terraform/*
 
@@ -87,3 +87,4 @@ jars/
 *.csv
 /data/
 /temp/
+service-account.json
