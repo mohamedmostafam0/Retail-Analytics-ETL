@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta
-import os
 
-from docker.types import Mount
 
-from variables.minio_vars import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
+from variables.minio_vars import (
+    MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, 
+    USER_ANALYTICS_BUCKET, MOVIE_REVIEW_KEY, USER_PURCHASE_KEY
+)
 from variables.gcp_vars import GCP_PROJECT_ID, GCP_DATASET_NAME
+from variables.airflow_vars import DATA_PATH
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -12,43 +14,17 @@ from airflow.utils.task_group import TaskGroup
 from airflow.providers.amazon.aws.operators.s3 import S3CreateBucketOperator
 from airflow.providers.amazon.aws.transfers.local_to_s3 import LocalFilesystemToS3Operator
 from airflow.providers.amazon.aws.transfers.sql_to_s3 import SqlToS3Operator
-from airflow.providers.docker.operators.docker import DockerOperator
-from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor
 from airflow.providers.google.cloud.operators.bigquery import BigQueryInsertJobOperator
 
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 
+from variables.spark_vars import SPARK_JARS, SPARK_CONF, PROCESS_DATA_SCRIPT
+
+from dags.scripts.logic.spark_logic import generate_spark_output_paths
 from dags.scripts.logic.bq_logic import (
     query_user_behaviour_metrics,
-    generate_looker_studio_link,
+    generate_looker_studio_link
 )
-
-def _generate_spark_output_paths(**kwargs):
-    ti = kwargs['ti']
-    ds = kwargs['ds'] # execution_date as YYYY-MM-DD
-
-    spark_clean_base_path = f"s3a://{USER_ANALYTICS_BUCKET}/clean"
-    ti.xcom_push(key='spark_clean_base_path', value=spark_clean_base_path)
-
-    user_purchase_spark_output_path = f"{spark_clean_base_path}/user_purchase/{ds}"
-    movie_review_spark_output_path = f"{spark_clean_base_path}/movie_review/{ds}"
-
-    ti.xcom_push(key='user_purchase_spark_output_path', value=user_purchase_spark_output_path)
-    ti.xcom_push(key='movie_review_spark_output_path', value=movie_review_spark_output_path)
-
-    
-
-# -------------------------
-# Parameters
-# -------------------------
-DATA_PATH = "/opt/airflow/data"
-
-USER_ANALYTICS_BUCKET = "user-analytics"
-MOVIE_REVIEW_KEY = "movie_review.csv"
-USER_PURCHASE_KEY = "raw/user_purchase.csv"
-
-SPARK_IMAGE = "my-spark:3.5"
-PROCESS_DATA_SCRIPT = "/opt/jobs/process_data.py"
 
 
 default_args = {
@@ -106,8 +82,8 @@ with DAG(
         
         generate_spark_output_paths_task = PythonOperator(
             task_id="generate_spark_output_paths",
-            python_callable=_generate_spark_output_paths,
-            provide_context=True,
+            python_callable=generate_spark_output_paths,
+
         )
 
         process_data = SparkSubmitOperator(
@@ -115,18 +91,12 @@ with DAG(
             application=PROCESS_DATA_SCRIPT,
             conn_id="spark-conn",
             deploy_mode="client",
-            jars="/opt/spark/jars-extra/aws-java-sdk-bundle-1.12.262.jar,/opt/spark/jars-extra/hadoop-aws-3.3.4.jar,/opt/spark/jars-extra/spark-bigquery-with-dependencies_2.12-0.42.2.jar",
+            jars=SPARK_JARS,
             conf={
-                "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
-                "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
+                **SPARK_CONF,
                 "spark.hadoop.fs.s3a.endpoint": MINIO_ENDPOINT,
                 "spark.hadoop.fs.s3a.access.key": MINIO_ACCESS_KEY,
                 "spark.hadoop.fs.s3a.secret.key": MINIO_SECRET_KEY,
-                "spark.hadoop.fs.s3a.path.style.access": "true",
-                # Add these BigQuery configurations
-                "spark.sql.execution.arrow.pyspark.enabled": "true",
-                "google.cloud.auth.service.account.enable": "true",
-                "google.cloud.auth.service.account.json.keyfile": "/opt/spark/sa-key.json",
             },
             env_vars={
                 "GOOGLE_APPLICATION_CREDENTIALS": "/opt/spark/sa-key.json"
@@ -143,7 +113,9 @@ with DAG(
         generate_spark_output_paths_task >> process_data
 
 
+
     with TaskGroup("bq_view_creation_tasks", tooltip="BigQuery View Creation Tasks") as bq_view_creation_tasks:
+
         query_user_behaviour_metrics_task = PythonOperator(
             task_id="query_user_behaviour_metrics",
             python_callable=query_user_behaviour_metrics,
@@ -152,67 +124,40 @@ with DAG(
                 "gcp_dataset_name": GCP_DATASET_NAME,
             },
         )
+        
+        views = [
+            'user_behaviour_metrics_view.sql',
+            'top_5_customers_by_amount_spent.sql',
+            'top_5_customers_by_positive_reviews.sql',
+            'correlation_amount_spent_vs_reviews.sql'
+        ]
 
-        create_user_behaviour_metrics_view = BigQueryInsertJobOperator(
-            task_id="create_user_behaviour_metrics_view",
-            configuration={
-                "query": {
-                    "query": "{% include 'user_behaviour_metrics_view.sql' %}",
-                    "useLegacySql": False,
-                }
-            },
-        )
+        tasks = []
+        for view in views:
+            task = BigQueryInsertJobOperator(
+                task_id=f'create_{view.split(".")[0]}_view',
+                configuration={
+                    "query": {
+                        "query": f"{{% include '{view}' %}}",
+                        "useLegacySql": False,
+                    }
+                },
+            )
+            tasks.append(task)
 
-        create_top_5_customers_by_amount_spent_view = BigQueryInsertJobOperator(
-            task_id="create_top_5_customers_by_amount_spent_view",
-            configuration={
-                "query": {
-                    "query": "{% include 'top_5_customers_by_amount_spent.sql' %}",
-                    "useLegacySql": False,
-                }
-            },
-        )
-
-        create_top_5_customers_by_positive_reviews_view = BigQueryInsertJobOperator(
-            task_id="create_top_5_customers_by_positive_reviews_view",
-            configuration={
-                "query": {
-                    "query": "{% include 'top_5_customers_by_positive_reviews.sql' %}",
-                    "useLegacySql": False,
-                }
-            },
-        )
-
-        create_correlation_amount_spent_vs_reviews_view = BigQueryInsertJobOperator(
-            task_id="create_correlation_amount_spent_vs_reviews_view",
-            configuration={
-                "query": {
-                    "query": "{% include 'correlation_amount_spent_vs_reviews.sql' %}",
-                    "useLegacySql": False,
-                }
-            },
-        )
-
+            query_user_behaviour_metrics_task >> tasks 
 
 
     generate_looker_studio_link_task = PythonOperator(
         task_id="generate_looker_studio_link",
         python_callable=generate_looker_studio_link,
-        provide_context=True,
+
         op_kwargs={
                 "gcp_project_id": GCP_PROJECT_ID,
                 "gcp_dataset_name": GCP_DATASET_NAME,
         },
-
     )
 
-    query_user_behaviour_metrics_task >> create_user_behaviour_metrics_view
-    create_user_behaviour_metrics_view >> [
-        create_top_5_customers_by_amount_spent_view,
-        create_top_5_customers_by_positive_reviews_view,
-        create_correlation_amount_spent_vs_reviews_view,
-    ]
-
-    # ingestion_tasks >> processing_tasks
-    # processing_tasks >> bq_view_creation_tasks
+    ingestion_tasks >> processing_tasks
+    processing_tasks >> bq_view_creation_tasks
     bq_view_creation_tasks >> generate_looker_studio_link_task

@@ -15,10 +15,11 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW__CORE__LOAD_EXAMPLES}
     AIRFLOW__API__AUTH_BACKEND: ${AIRFLOW__API__AUTH_BACKEND}
     AIRFLOW_CONN_POSTGRES_DEFAULT: ${AIRFLOW_CONN_POSTGRES_DEFAULT}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+
   volumes:
     - ./dags:/opt/airflow/dags
     - ./data:/opt/airflow/data
-    - ./visualization:/opt/airflow/visualization
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ./tests:/opt/airflow/tests
@@ -44,7 +45,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
-      - ./containers/upstream:/docker-entrypoint-initdb.d
+      - ./containers/db-init:/docker-entrypoint-initdb.d
       - ./data:/input_data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
@@ -66,17 +67,14 @@ services:
       - PYTHONPATH=/opt/airflow:/opt/airflow/dags:/opt/airflow/plugins:/opt/airflow/variables
       - GOOGLE_APPLICATION_CREDENTIALS=/opt/spark/sa-key.json
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock # 👈 add this
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./dags:/opt/airflow/dags
       - ./variables:/opt/airflow/variables
       - ./data:/opt/airflow/data
-      - ./visualization:/opt/airflow/visualization
       - ./logs:/opt/airflow/logs
-      - ./plugins:/opt/airflow/plugins
-      - ./tests:/opt/airflow/tests
       - ./temp:/opt/airflow/temp
-      - ./jars:/opt/spark/jars-extra # 👈 change from /opt/airflow/jars
-      - ./jobs:/opt/jobs # 👈 already there (keep)
+      - ./jars:/opt/spark/jars-extra
+      - ./jobs:/opt/jobs
       - ./service-account.json:/opt/spark/sa-key.json
 
     healthcheck:
@@ -99,17 +97,14 @@ services:
       - GOOGLE_APPLICATION_CREDENTIALS=/opt/spark/sa-key.json
 
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock # 👈 add this
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./dags:/opt/airflow/dags
       - ./variables:/opt/airflow/variables
       - ./data:/opt/airflow/data
-      - ./visualization:/opt/airflow/visualization
       - ./logs:/opt/airflow/logs
-      - ./plugins:/opt/airflow/plugins
-      - ./tests:/opt/airflow/tests
       - ./temp:/opt/airflow/temp
-      - ./jars:/opt/spark/jars-extra # 👈 add this
-      - ./jobs:/opt/jobs # 👈 add this
+      - ./jars:/opt/spark/jars-extra
+      - ./jobs:/opt/jobs
       - ./service-account.json:/opt/spark/sa-key.json
 
     healthcheck:
@@ -129,7 +124,7 @@ services:
 
   airflow-init:
     <<: *airflow-common
-    command: bash -c "python /opt/airflow/setup_conn.py && airflow version"
+    # command: bash -c "python airflow version"
     environment:
       <<: *airflow-common-env
       _AIRFLOW_DB_UPGRADE: "true"
@@ -163,7 +158,7 @@ services:
       - SPARK_MASTER_HOST=spark
       - SPARK_MASTER_PORT=7077
       - SPARK_MASTER_WEBUI_PORT=8080
-      - SPARK_CLASSPATH=/opt/spark/jars-extra/* # 👈
+      - SPARK_CLASSPATH=/opt/spark/jars-extra/*
       - SPARK_EXTRA_CLASSPATH=/opt/spark/jars-extra/*
       - GOOGLE_APPLICATION_CREDENTIALS=/opt/spark/sa-key.json
     image: my-spark:3.5
@@ -185,7 +180,7 @@ services:
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark:7077
-      - SPARK_CLASSPATH=/opt/spark/jars-extra/* # 👈
+      - SPARK_CLASSPATH=/opt/spark/jars-extra/*
       - SPARK_EXTRA_CLASSPATH=/opt/spark/jars-extra/*
       - GOOGLE_APPLICATION_CREDENTIALS=/opt/spark/sa-key.json
     depends_on:
